@@ -3,6 +3,7 @@
     <File Path="Directory.Build.props" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Redplcs.Windowing.OpenGL/Redplcs.Windowing.OpenGL.csproj" />
     <Project Path="src/Redplcs.Windowing/Redplcs.Windowing.csproj" />
   </Folder>
 </Solution>
