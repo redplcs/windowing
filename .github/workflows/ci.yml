@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.x
+
+      - run: dotnet build -c Release
+
+      - run: dotnet test -c Release --no-build
+
+      - name: Find the last published version
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack and compare the public API with the last published version
+        env:
+          BASELINE: ${{ steps.baseline.outputs.version }}
+        run: dotnet pack -c Release --no-build -o artifacts ${BASELINE:+-p:PackageValidationBaselineVersion=$BASELINE}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: artifacts/*.nupkg
+          if-no-files-found: error
