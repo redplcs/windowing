@@ -2,4 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Redplcs.Windowing\Redplcs.Windowing.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../Redplcs.Windowing/ExceptionHelper.cs"/>
+  </ItemGroup>
 </Project>
