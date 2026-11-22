@@ -33,10 +33,6 @@ jobs:
         with:
           dotnet-version: 11.0.x
 
-      - run: dotnet build -c Release
-
-      - run: dotnet test -c Release --no-build
-
       - name: Find the last published version
         id: baseline
         env:
@@ -44,6 +40,15 @@ jobs:
         run: |
           tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      # Restore downloads the baseline package, and pack --no-build skips restore,
+      # so the baseline version goes to build as well.
+      - name: Build
+        env:
+          BASELINE: ${{ steps.baseline.outputs.version }}
+        run: dotnet build -c Release ${BASELINE:+-p:PackageValidationBaselineVersion=$BASELINE}
+
+      - run: dotnet test -c Release --no-build
 
       - name: Pack and compare the public API with the last published version
         env:
