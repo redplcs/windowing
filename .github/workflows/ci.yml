@@ -5,6 +5,11 @@ on:
   push:
     branches: [master]
   workflow_call:
+    inputs:
+      version:
+        description: Version to build, set by the release workflow
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -14,14 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # MinVer reads the version from this tag; the tag stays on the runner.
+      - name: Tag the release commit
+        if: inputs.version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: git tag "$VERSION"
 
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 11.0.x
-
-      - run: dotnet build -c Release
-
-      - run: dotnet test -c Release --no-build
 
       - name: Find the last published version
         id: baseline
@@ -31,10 +41,25 @@ jobs:
           tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
+      # Restore downloads the baseline package, and pack --no-build skips restore,
+      # so the baseline version goes to build as well.
+      - name: Build
+        env:
+          BASELINE: ${{ steps.baseline.outputs.version }}
+        run: dotnet build -c Release ${BASELINE:+-p:PackageValidationBaselineVersion=$BASELINE}
+
+      - run: dotnet test -c Release --no-build
+
       - name: Pack and compare the public API with the last published version
         env:
           BASELINE: ${{ steps.baseline.outputs.version }}
-        run: dotnet pack -c Release --no-build -o artifacts ${BASELINE:+-p:PackageValidationBaselineVersion=$BASELINE}
+          VERSION: ${{ inputs.version }}
+        run: |
+          args=()
+          if [ -n "$BASELINE" ]; then args+=("-p:PackageValidationBaselineVersion=$BASELINE"); fi
+          # A patch release must not change the public API at all (VER-3).
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[1-9] ]]; then args+=(-p:EnableStrictModeForBaselineValidation=true); fi
+          dotnet pack -c Release --no-build -o artifacts "${args[@]}"
 
       - uses: actions/upload-artifact@v7
         with:
