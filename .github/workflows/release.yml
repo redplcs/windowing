@@ -1,36 +1,48 @@
 name: Release
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release: X.Y.Z, X.Y.Z-preview.N or X.Y.Z-rc.N"
+        required: true
+        type: string
 
 permissions: {}
 
 jobs:
-  release-please:
+  check:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      contents: read
     steps:
-      - uses: googleapis/release-please-action@v5
-        id: release
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-  # A release created with the default token does not start other workflows,
-  # so the packages are built here, in the same run.
+      - name: Check the version
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/master') { throw "Releases are made from master, not $env:GITHUB_REF." }
+          if ($env:VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(preview|rc)\.[1-9]\d*)?$') {
+            throw "Expected X.Y.Z, X.Y.Z-preview.N or X.Y.Z-rc.N, got '$env:VERSION'."
+          }
+          $last = git tag --list | ForEach-Object { $t = $null; if ([semver]::TryParse($_, [ref]$t)) { $t } } | Sort-Object | Select-Object -Last 1
+          if ($last -and [semver]$env:VERSION -le $last) { throw "$env:VERSION must be greater than the last tag $last." }
+
   build:
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: check
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
+    with:
+      version: ${{ inputs.version }}
 
-  attach:
-    needs: [release-please, build]
+  # The tag does not exist yet: GitHub creates it on the built commit when the draft is published.
+  draft:
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -39,8 +51,17 @@ jobs:
         with:
           name: packages
 
-      - name: Attach the packages to the draft release
+      - name: Create the draft release with the packages
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release upload "$TAG" *.nupkg --repo "$GITHUB_REPOSITORY"
+          VERSION: ${{ inputs.version }}
+        run: |
+          args=(--draft --target "$GITHUB_SHA" --title "$VERSION" --generate-notes)
+          if [[ "$VERSION" == *-* ]]; then
+            args+=(--prerelease)
+          else
+            # Notes of a stable release start at the previous stable release, not at the last preview or rc.
+            last=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+            if [ -n "$last" ]; then args+=(--notes-start-tag "$last"); fi
+          fi
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" "${args[@]}" *.nupkg
